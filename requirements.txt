@@ -1,0 +1,9 @@
+streamlit
+PyPDF2==3.0.0
+sentence-transformers
+faiss-cpu
+transformers
+numpy
+torch
+
+        
