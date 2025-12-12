@@ -1,11 +1,11 @@
-streamlit
+streamlit==1.52.1
 PyPDF2==3.0.0
 sentence-transformers
 faiss-cpu
 transformers
 numpy
 torch
-google-generative-ai
+google-generative-ai>=0.6.0
 
 
         
