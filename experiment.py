@@ -4,11 +4,14 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 import faiss
 import re
-from google import genai
 import os
+from google.genai import Client  # ✅ Official Gemini SDK
 
-st.set_page_config(page_title="🔥 RAG Bot with Gemini", layout="wide")
-st.title("RAG Bot ")
+# ---------------------------
+# 0. Streamlit Config
+# ---------------------------
+st.set_page_config(page_title="🔥 RAG Bot with Gemini 2.5-flash", layout="wide")
+st.title("RAG Bot")
 
 # ---------------------------
 # 1. Load Embedder (cached)
@@ -20,16 +23,17 @@ def load_embedder():
 embedder = load_embedder()
 
 # ---------------------------
-# 2. Initialize Gemini Client
+# 2. Configure Gemini 2.5-flash
 # ---------------------------
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    st.error("🚨 GEMINI_API_KEY not found! Add it in Streamlit → Settings → Secrets.")
+    st.stop()
 
-# ❗ IMPORTANT: Put your REAL API KEY here
-GEMINI_API_KEY = "AIzaSyBPmgBqZbKUOVFoPrb3BGQSkLMxdZN-WI0"   # ← YOUR KEY HERE
-
-client = genai.Client(api_key="AIzaSyBPmgBqZbKUOVFoPrb3BGQSkLMxdZN-WI0")
+client = Client(api_key=GEMINI_API_KEY)
 
 # ---------------------------
-# 3. PDF Upload + Extraction
+# 3. PDF Upload
 # ---------------------------
 pdf = st.file_uploader("Upload PDF", type="pdf")
 
@@ -39,14 +43,14 @@ if pdf:
         f.write(pdf.getbuffer())
 
     reader = PdfReader(pdf_path)
-    text = " ".join([p.extract_text() or "" for p in reader.pages])
+    text = " ".join([page.extract_text() or "" for page in reader.pages])
     text = re.sub(r"\s+", " ", text).strip()
 
     if not text:
-        st.error("PDF has no text!")
+        st.error("PDF has no extractable text!")
         st.stop()
 
-    st.success("PDF loaded!")
+    st.success("PDF loaded successfully!")
 
     # ---------------------------
     # 4. Chunking
@@ -67,14 +71,14 @@ if pdf:
     chunks = chunk_text(text)
 
     # ---------------------------
-    # 5. Build FAISS Index
+    # 5. Build FAISS Index (cached)
     # ---------------------------
     @st.cache_resource
     def build_index(chunks):
-        embs = embedder.encode(chunks, show_progress_bar=False).astype("float32")
-        index = faiss.IndexFlatL2(embs.shape[1])
-        index.add(embs)
-        return index, embs
+        embeds = embedder.encode(chunks).astype("float32")
+        index = faiss.IndexFlatL2(embeds.shape[1])
+        index.add(embeds)
+        return index, embeds
 
     index, embeddings = build_index(chunks)
 
@@ -84,37 +88,39 @@ if pdf:
     if "chat" not in st.session_state:
         st.session_state.chat = []
 
-    query = st.text_input("Ask anything from your PDF:")
+    query = st.text_input("Ask a question based on your PDF:")
 
     if query:
-        # -------- Retrieve top chunks --------
+        # Retrieve relevant chunks using FAISS
         q_vec = embedder.encode([query]).astype("float32")
         D, I = index.search(q_vec, 4)
-        context = "\n".join([chunks[i] for i in I[0] if i < len(chunks)])
+        context = "\n".join([chunks[i] for i in I[0]])
 
-        # -------- Gemini LLM Call --------
         prompt = f"""
 You are an extremely accurate assistant.
-Answer ONLY using the text in the context below.
-If answer not found, reply exactly: "I don’t know."
+Answer ONLY using the context below.
+If answer is not found, say exactly: "I don’t know."
 
 Context:
 {context}
 
 Question: {query}
+
 Answer:
 """
-        resp = client.models.generate_content(
-            model="gemini-2.5-flash-lite",  # free tier
-            contents=prompt
-        )
-        answer = resp.text
+
+        # ---------------------------
+        # 🔥 Gemini 2.5-flash Chat
+        # ---------------------------
+        chat = client.chats.create(model="gemini-2.5-flash")
+        response = chat.send_message(prompt)
+        answer = response.text
 
         st.session_state.chat.append(("You", query))
         st.session_state.chat.append(("Bot", answer))
 
     # ---------------------------
-    # 7. Display Chat
+    # 7. Chat Display
     # ---------------------------
     for sender, msg in st.session_state.chat:
         st.markdown(f"**{sender}:** {msg}")
